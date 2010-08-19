@@ -1,5 +1,4 @@
 import django
-from django.conf import settings
 from django.db import models
 from django.db.models import Field
 from django.db.models.fields import FieldDoesNotExist
@@ -8,7 +7,6 @@ from django.core import serializers
 from pymongo.objectid import ObjectId
 from django.db.models.fields import AutoField as DJAutoField
 from .manager import Manager
-from django.db.models import signals
 
 __all__ = ["EmbeddedModel"]
 __doc__ = "Mongodb special fields"
@@ -58,6 +56,8 @@ def add_mongodb_manager(sender, **kwargs):
     """
     Fix autofield
     """
+    from django.conf import settings
+    
     cls = sender
     database = settings.DATABASES[cls.objects.db]
     if 'mongodb' in database['ENGINE']:
@@ -79,11 +79,9 @@ def add_mongodb_manager(sender, **kwargs):
             setattr(cls, 'mongodb', Manager())
 
             mongo_meta = getattr(cls, "MongoMeta", MongoMeta).__dict__.copy()
-            setattr(cls, "_mongo_meta", MongoMeta())
+#            setattr(cls, "_meta", MongoMeta())
             for attr in mongo_meta:
                 if attr.startswith("_"):
                     continue
-                setattr(cls._mongo_meta, attr, mongo_meta[attr])
-
-
-signals.class_prepared.connect(add_mongodb_manager)
+                setattr(cls._meta, attr, mongo_meta[attr])
+                

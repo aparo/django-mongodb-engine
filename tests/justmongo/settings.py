@@ -1,4 +1,4 @@
-# Django settings for testproj2 project.
+# Django settings for justmongo2 project.
 
 DEBUG = True
 TEMPLATE_DEBUG = DEBUG
@@ -11,14 +11,6 @@ MANAGERS = ADMINS
 
 DATABASES = {
     'default': {
-        'ENGINE': 'sqlite3', # Add 'postgresql_psycopg2', 'postgresql', 'mysql', 'sqlite3' or 'oracle'.
-        'NAME': 'test.db',                      # Or path to database file if using sqlite3.
-        'USER': '',                      # Not used with sqlite3.
-        'PASSWORD': '',                  # Not used with sqlite3.
-        'HOST': '',                      # Set to empty string for localhost. Not used with sqlite3.
-        'PORT': '',                      # Set to empty string for default. Not used with sqlite3.
-    },
-    'mongodb': {
         'ENGINE': 'django_mongodb_engine.mongodb',
         'NAME': 'test',
         'USER': '',
@@ -84,7 +76,7 @@ MIDDLEWARE_CLASSES = (
     'django.contrib.messages.middleware.MessageMiddleware',
 )
 
-ROOT_URLCONF = 'testproj.urls'
+ROOT_URLCONF = 'justmongo.urls'
 
 TEMPLATE_DIRS = (
     # Put strings here, like "/home/html/django_templates" or "C:/www/django/templates".
@@ -93,21 +85,21 @@ TEMPLATE_DIRS = (
 )
 
 INSTALLED_APPS = (
-#    'django_mongodb_engine',
+    'django_mongodb_engine',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.sites',
     'django.contrib.messages',
-    'testproj.myapp',
-    'testproj.mixed',
-    'south',
+    'justmongo.myapp',
+    'justmongo.mixed',
+#    'south',
     # Uncomment the next line to enable the admin:
     'django.contrib.admin',
 )
 
 DATABASE_ROUTERS = ['django_mongodb_engine.mongodb.router.MongoDBRouter']
-MONGODB_MANAGED_APPS = ['testproj.myapp', ]
-MONGODB_MANAGED_MODELS = ['mixed.record', ]
+#MONGODB_MANAGED_APPS = ['justmongo.myapp', ]
+#MONGODB_MANAGED_MODELS = ['mixed.record', ]
 
 SOUTH_DATABASE_ADAPTERS = { "mongodb" : "django_mongodb_engine.mongodb.south"}

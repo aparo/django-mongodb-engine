@@ -84,8 +84,8 @@ TEMPLATE_DIRS = (
     # Don't forget to use absolute paths, not relative paths.
 )
 
-INSTALLED_APPS = (
-    'django_mongodb_engine',
+INSTALLED_APPS = MONGODB_MANAGED_APPS = (
+    'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -93,13 +93,12 @@ INSTALLED_APPS = (
     'django.contrib.messages',
     'justmongo.myapp',
     'justmongo.mixed',
-#    'south',
+    'south',
     # Uncomment the next line to enable the admin:
-    'django.contrib.admin',
 )
-
-DATABASE_ROUTERS = ['django_mongodb_engine.mongodb.router.MongoDBRouter']
-#MONGODB_MANAGED_APPS = ['justmongo.myapp', ]
 #MONGODB_MANAGED_MODELS = ['mixed.record', ]
 
-SOUTH_DATABASE_ADAPTERS = { "mongodb" : "django_mongodb_engine.mongodb.south"}
+DATABASE_ROUTERS = ['django_mongodb_engine.mongodb.router.MongoDBRouter']
+SOUTH_DATABASE_ADAPTERS = { 
+                           "default" : "django_mongodb_engine.mongodb.south"
+                           }

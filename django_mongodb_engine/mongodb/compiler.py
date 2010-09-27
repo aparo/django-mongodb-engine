@@ -147,7 +147,20 @@ class DBQuery(NonrelQuery):
     def __init__(self, compiler, fields):
         super(DBQuery, self).__init__(compiler, fields)
         db_table = self.query.get_meta().db_table
-        self._collection = self.connection.db_connection[db_table]
+        cnt = 10
+        while cnt:
+            cnt -= 1
+            try:
+                self._collection = self.connection.db_connection[db_table]
+            except pymongo.errors.PyMongoError:
+                if not cnt:
+                    raise
+
+                if(cnt < 9):
+                    time.sleep(6)
+            else:
+                break
+
         self._ordering = []
         self.db_query = {}
 

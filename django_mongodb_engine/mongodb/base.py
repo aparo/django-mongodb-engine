@@ -58,15 +58,25 @@ class DatabaseWrapper(NonrelDatabaseWrapper):
             wait = self.settings_dict.get('WAIT_FOR_SLAVES', 0)
 
             try:
+                import warnings
+                
                 if pymongo.version >= '1.8':
                     assert host is None or isinstance(host, (basestring, list)), 'If set, HOST must be a string or a list of strings'
                 else:
                     assert host is None or isinstance(host, basestring), 'If set, HOST must be a string'
 
                 if isinstance(host, basestring) and host.startswith('mongodb://'):
-                    assert port is None, 'If the host is a mongodb:// URL, setting the port is useless'
+                    if port:
+                        # If host starts with mongodb:// the port will be 
+                        # ignored so lets make sure it is None
+                        port = None
+                        warnings.warn("If the host is a mongodb:// URL, setting the port is useless. I'll ignore it", RuntimeWarning)
 
-                assert port is None or isinstance(port, int), 'If set, PORT must be an integer'
+                try:
+                    #If not port then port will be None else will be converted to int.
+                    port = (port and int(port)) or None
+                except ValueError:
+                    raise ImproperlyConfigured, 'If set, PORT must be an integer'
 
                 assert isinstance(safe, bool), 'If set, SAFE_INSERTS must be True or False'
                 assert isinstance(wait, int), 'If set, WAIT_FOR_SLAVES must be an integer'

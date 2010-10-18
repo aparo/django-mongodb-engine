@@ -1,9 +1,6 @@
 from setuptools import setup, find_packages
-import os
 
-pkginfo = __import__("__pkginfo__")
-
-install_requires = pkginfo.install_requires
+pkginfo = __import__('__pkginfo__')
 
 CLASSIFIERS = [
     'Topic :: Internet',
@@ -18,20 +15,23 @@ CLASSIFIERS = [
 
 for ver in pkginfo.pyversions:
     CLASSIFIERS.append('Programming Language :: Python :: %s' % ver)
-    
 
-setup(name='django_mongodb_engine',
-      version= pkginfo.version,
-      packages=find_packages(exclude=['ez_setup', 'tests', 'tests.*']),
-      author='Flavio Percoco Premoli - Alberto Paro',
-      author_email='flaper87@{nospam}flaper87.org',
-      url='http://github.com/FlaPer87/django-mongodb-engine/',
-      license='MIT',
-      include_package_data=True,
-      description=pkginfo.short_desc,
-      long_description=pkginfo.long_desc,
-      platforms=['any'],
-      classifiers=CLASSIFIERS,
-      install_requires=install_requires,
-      test_suite='tests',
+
+setup(
+    name=pkginfo.distname,
+    version=pkginfo.version,
+    author=pkginfo.author,
+    author_email=pkginfo.author_email,
+    url=pkginfo.web,
+    license=license,
+    description=pkginfo.short_desc,
+    long_description=pkginfo.long_desc,
+
+    platforms=['any'],
+    install_requires=pkginfo.install_requires,
+
+    packages=find_packages(exclude=['ez_setup', 'tests', 'tests.*']),
+    include_package_data=True,
+    classifiers=CLASSIFIERS,
+    test_suite='tests',
 )

@@ -1,13 +1,14 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import logging
-logger = logging.getLogger(__name__)
+__version__     = (0, 2, 0)
+__author__      = "Flavio Percoco Premoli, Alberto Paro, Jonas Haag and contributors"
+__contact__     = "django-non-relational@googlegroups.com"
+__homepage__    = "http://github.com/django-mongodb-engine/mongodb-engine"
+__docformat__   = "restructuredtext"
 
-VERSION = (0, 1, 1)
-
-__version__ = ".".join(map(str, VERSION[0:3])) + "".join(VERSION[3:])
-__author__ = "Flavio Percoco Premoli"
-__contact__ = "flaper87@flaper87.org"
-__homepage__ = "http://github.com/FlaPer87/django-mongodb-engine/"
-__docformat__ = "restructuredtext"
+try:
+    from django.conf import settings
+    import _bootstrap
+except ImportError:
+    pass

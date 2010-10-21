@@ -122,6 +122,31 @@ class MongoDjTest(TestCase):
             list(Entry.objects.order_by('date_published')),
             [entry2, entry1]
         )
+        
+    def test_skip_limit(self):
+        now = datetime.datetime.now()
+        before = now - datetime.timedelta(days=1)
+
+        Entry(title="entry 1", date_published=now).save()
+        Entry(title="entry 2", date_published=before).save()
+        Entry(title="entry 3", date_published=before).save()
+
+        self.assertEqual(
+            len(Entry.objects.order_by('-date_published')[:2]),
+            2
+        )
+
+        # With step
+        self.assertEqual(
+            len(Entry.objects.order_by('date_published')[1:2:1]),
+            1
+        )
+        
+        self.assertEqual(
+            len(Entry.objects.order_by('date_published')[1:2]),
+            1
+        )
+
 
 
     def test_dates_less_and_more_than(self):
@@ -332,4 +357,18 @@ class MongoDjTest(TestCase):
         obj.save()
 
         l3 = LazyModelInstance(Entry, obj.id)
+        self.assertEqual(l3._wrapped, None)
         self.assertEqual(obj, l3)
+        self.assertNotEqual(l3._wrapped, None)
+
+    def test_lazy_model_instance_in_list(self):
+        obj = TestFieldModel()
+        related = DynamicModel(gen=42)
+        obj.mlist.append(related)
+        obj.save()
+        self.assertNotEqual(related.id, None)
+        obj = TestFieldModel.objects.get()
+        self.assertEqual(obj.mlist[0]._wrapped, None)
+        # query will be done NOW:
+        self.assertEqual(obj.mlist[0].gen, 42)
+        self.assertNotEqual(obj.mlist[0]._wrapped, None)

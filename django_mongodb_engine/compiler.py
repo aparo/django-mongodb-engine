@@ -1,15 +1,13 @@
-from future_builtins import zip
 import sys
 import re
 
-from datetime import datetime
 from functools import wraps
 
 from django.db.utils import DatabaseError
 from django.db.models.fields import NOT_PROVIDED
 
 from django.db.models.sql import aggregates as sqlaggregates
-from django.db.models.sql.constants import LOOKUP_SEP, MULTI, SINGLE
+from django.db.models.sql.constants import MULTI, SINGLE
 
 import pymongo
 from pymongo.objectid import ObjectId
@@ -89,7 +87,7 @@ class DBQuery(NonrelQuery):
     @property
     def collection(self):
         return self._collection
-        
+
     @safe_generator
     def fetch(self, low_mark, high_mark):
         results = self._get_results()
@@ -213,7 +211,7 @@ class SQLCompiler(NonrelCompiler):
                         filters[k] = v
             else:
                 try:
-                    field, val = self.make_atom(*child, **{"negated": where.negated})
+                    field, val = self.make_atom(*child, negated=where.negated)
                     filters[field] = val
                 except NotImplementedError:
                     pass
@@ -226,6 +224,8 @@ class SQLCompiler(NonrelCompiler):
                 lookup_type, params_or_value, self.connection
             )
         else:
+            # apparently this code is never executed
+            assert 0
             params = Field().get_db_prep_lookup(lookup_type, params_or_value,
                 connection=self.connection, prepared=True)
         assert isinstance(lhs, (list, tuple))
@@ -310,22 +310,23 @@ class SQLCompiler(NonrelCompiler):
 
     def _save(self, data, return_id=False):
         primary_key = self._collection.save(data, **self.insert_params())
-        return unicode(primary_key)
-        
+        if return_id:
+            return unicode(primary_key)
+
     def execute_sql(self, result_type=MULTI):
         """
         Handles aggregate/count queries
         """
-        
+
         ret, sqlagg, reduce, finalize, order, initial = [], [], [], [], [], {}
         query = self.build_query()
-        
+
         def add_to_ret(val):
             if result_type is SINGLE:
                 ret.append(val)
             elif result_type is MULTI:
                 ret.append([val])
-                
+
         # First aggregations implementation
         # THIS CAN/WILL BE IMPROVED!!!
         for alias, aggregate in self.query.aggregate_select.items():
@@ -341,31 +342,31 @@ class SQLCompiler(NonrelCompiler):
                     cls_name = aggregate.__class__.__name__
                     agg = getattr(aggregations, cls_name)((aggregate.source and aggregate.source.name) or "_id", **aggregate.extra)
                     agg.add_to_query(self.query, alias or "_id__%s" % cls_name, aggregate.col, aggregate.source, aggregate.extra.get("is_summary", False))
-                    aggregate = agg 
+                    aggregate = agg
                 except:
                     # We're not able to execute sql aggregates here
                     self.query.aggregates.pop(alias)
                     # Should we raise an exception instead of failing silently?
                     # raise NotImplementedError("The database backend doesn't support aggregations of type %s" % type(aggregate))
                     continue
-                    
-                
+
+
             #just to keep the right order
             order.append(aggregate.alias)
             agg = aggregate.as_query(query)
             initial.update(agg[0])
             reduce.append(agg[1])
             finalize.append(agg[2])
-        
-        cursor = query.collection.group(None, 
-                            query.db_query, 
+
+        cursor = query.collection.group(None,
+                            query.db_query,
                             initial,
                             reduce="function(doc, out){ %s }" % "; ".join(reduce),
                             finalize="function(out){ %s }" % "; ".join(finalize))
-        
+
         for agg in order:
             add_to_ret((agg and cursor[0][agg]) or sqlagg.pop(0))
-            
+
         return ret
 
 class SQLInsertCompiler(NonrelInsertCompiler, SQLCompiler):

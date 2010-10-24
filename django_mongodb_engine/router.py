@@ -57,11 +57,11 @@ class MongoDBRouter(object):
         """Make sure that a mongodb model appears on a mongodb database"""
 
         if db in self.mongodb_databases:
-           return self.is_managed(model)
+            return self.is_managed(model)
         elif self.is_managed(model):
             return db in self.mongodb_databases
-            
-        return None 
+
+        return None
 
     def valid_for_db_engine(self, driver, model):
         """Make sure that a model is valid for a database provider"""

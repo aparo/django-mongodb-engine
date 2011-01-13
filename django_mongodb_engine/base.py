@@ -1,4 +1,5 @@
 from django.core.exceptions import ImproperlyConfigured
+from django.conf import settings
 
 import pymongo
 from .creation import DatabaseCreation
@@ -12,14 +13,14 @@ from djangotoolbox.db.base import (
     NonrelDatabaseOperations
 )
 
+from datetime import datetime
 
 class ImproperlyConfiguredWarning(Warning):
     pass
 
-
 class DatabaseFeatures(NonrelDatabaseFeatures):
     string_based_auto_field = True
-
+    supports_dicts = True
 
 class DatabaseOperations(NonrelDatabaseOperations):
     compiler_module = __name__.rsplit('.', 1)[0] + '.compiler'
@@ -31,7 +32,7 @@ class DatabaseOperations(NonrelDatabaseOperations):
         from django.db.models.sql.aggregates import Count
         from .contrib.aggregations import MongoAggregate
         if not isinstance(aggregate, (Count, MongoAggregate)):
-            raise NotImplementedError("This database does not support %r "
+            raise NotImplementedError("django-mongodb-engine does not support %r "
                                       "aggregates" % type(aggregate))
 
     def sql_flush(self, style, tables, sequence_list):
@@ -47,6 +48,17 @@ class DatabaseOperations(NonrelDatabaseOperations):
                 continue
             self.connection.db_connection.drop_collection(table)
         return []
+
+    def value_to_db_date(self, value):
+        if value is None:
+            return None
+        return datetime(value.year, value.month, value.day)
+
+    def value_to_db_time(self, value):
+        if value is None:
+            return None
+        return datetime(1, 1, 1, value.hour, value.minute, value.second,
+                                 value.microsecond)
 
 
 class DatabaseValidation(NonrelDatabaseValidation):
@@ -150,8 +162,14 @@ class DatabaseWrapper(NonrelDatabaseWrapper):
 
             self._db_connection = self._connection[self.db_name]
 
-            from .serializer import TransformDjango
-            self._db_connection.add_son_manipulator(TransformDjango())
+            enable_referencing = getattr(settings, 'MONGODB_AUTOMATIC_REFERENCING', False)
+            if not enable_referencing:
+                # backwards compatibility
+                enable_referencing = getattr(settings, 'MONGODB_ENGINE_ENABLE_MODEL_SERIALIZATION', False)
+            if enable_referencing:
+                from .serializer import TransformDjango
+                self._db_connection.add_son_manipulator(TransformDjango())
+
             # We're done!
             self._connected = True
 

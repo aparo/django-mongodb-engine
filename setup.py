@@ -4,14 +4,13 @@ import django_mongodb_engine as distmeta
 
 
 CLASSIFIERS = [
+    'Intended Audience :: Developers',
+    'License :: OSI Approved :: BSD License',
+    'Programming Language :: Python',
     'Topic :: Internet',
     'Topic :: Database',
-    'Operating System :: POSIX',
-    'Programming Language :: Python',
-    'Intended Audience :: Developers',
-    'Operating System :: OS Independent',
-    'License :: OSI Approved :: BSD License',
     'Topic :: Software Development :: Libraries :: Python Modules',
+    'Operating System :: OS Independent',
 ]
 
 for ver in ['2', '2.4', '2.5', '2.6', '2.7']:
@@ -19,7 +18,7 @@ for ver in ['2', '2.4', '2.5', '2.6', '2.7']:
 
 
 setup(
-    name='django_mongodb_engine',
+    name='django-mongodb-engine',
     version='.'.join(map(str, distmeta.__version__)),
     author=distmeta.__author__,
     author_email=distmeta.__contact__,

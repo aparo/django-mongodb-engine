@@ -5,11 +5,9 @@ from datetime import datetime
 import time
 from django_mongodb_engine.query import A
 
-def skip(func):
-    pass
-
 class EmbeddedModelFieldTestCase(TestCase):
     def test_field_docstring(self):
+        # This is a 1:1 copy of EmbeddedModelField's doctest
         bob = Customer(
             name='Bob', last_name='Laxley',
             address=Address(street='Behind the Mountains 23',
@@ -37,7 +35,6 @@ class EmbeddedModelFieldTestCase(TestCase):
         self.assertEqual(obj.em.charfield, 'foo')
         self.assertNotEqual(obj.em.datetime_auto_now, None)
         self.assertNotEqual(obj.em.datetime_auto_now_add, None)
-        time.sleep(1) # sorry for that, FIXME!
         obj.save()
         auto_now_before = obj.em.datetime_auto_now
         obj = Model.objects.get()
@@ -60,50 +57,36 @@ class EmbeddedModelFieldTestCase(TestCase):
         self.assertEqual(obj.dict_emb['lala'].datetime, foodate)
         obj.dict_emb['blah'].charfield = "Some Change"
         obj.dict_emb['foo'] = EmbeddedModel(charfield='bar')
-        time.sleep(1) # sorry for that, FIXME!
         obj.save()
         obj = Model.objects.get()
+        obj.save()
         self.assertEqual(obj.dict_emb['blah'].charfield, 'Some Change')
         self.assertNotEqual(obj.dict_emb['blah'].datetime_auto_now_add, obj.dict_emb['blah'].datetime_auto_now)
         self.assertEqual(obj.dict_emb['foo'].charfield, 'bar')
+
+    def test_legacy_field(self):
+        # LegacyLegacyModelField should behave like EmbeddedLegacyModelField for
+        # "new-style" data sets
+        LegacyModel.objects.create(legacy=EmbeddedModel(charfield='blah'))
+        self.assertEqual(LegacyModel.objects.get().legacy.charfield, u'blah')
+
+        # LegacyLegacyModelField should keep the embedded model's 'id' if the data
+        # set contains it. To add one, we have to do a manual update here:
+        from utils import get_pymongo_collection
+        collection = get_pymongo_collection('embedded_legacymodel')
+        collection.update({}, {'$set' : {'legacy._id' : 42}}, safe=True)
+        self.assertEqual(LegacyModel.objects.get().legacy.id, 42)
+
+        # If the data record contains '_app' or '_model', they should be
+        # stripped out so the resulting model instance is not populated with them.
+        collection.update({}, {'$set' : {'legacy._model' : 'a', 'legacy._app' : 'b'}}, safe=True)
+        self.assertFalse(hasattr(LegacyModel.objects.get().legacy, '_model'))
+        self.assertFalse(hasattr(LegacyModel.objects.get().legacy, '_app'))
 
     def test_query_embedded(self):
         Model(x=3, em=EmbeddedModel(charfield='foo')).save()
         obj = Model(x=3, em=EmbeddedModel(charfield='blurg'))
         obj.save()
         Model(x=3, em=EmbeddedModel(charfield='bar')).save()
-
-        # XXX: Why does Model.objects.get(em=A....) behave differently here?
-        # (Crashes with a TypeError)
-        obj_from_db = Model.objects.get(em=A('id', obj.em.id))
+        obj_from_db = Model.objects.get(em=A('charfield', 'blurg'))
         self.assertEqual(obj, obj_from_db)
-
-    def test_aggregations(self):
-        Customer(name='Bob', last_name='Laxley',
-            address=Address(street='Behind the Mountains 23',
-                            postal_code=1337, city='Blurginson'), age=4, birthday=datetime(2007, 12, 25)).save()
-        Customer(name='Bob', last_name='Laxley',
-            address=Address(street='Behind the Mountains 23',
-                            postal_code=1337, city='Blurginson'), age=4, birthday=datetime(2006, 1, 01)).save()
-        Customer(name='Bob', last_name='Laxley',
-            address=Address(street='Behind the Mountains 23',
-                            postal_code=1337, city='Blurginson'), age=1, birthday=datetime(2008, 12, 01)).save()
-        Customer(name='Bob', last_name='Laxley',
-            address=Address(street='Behind the Mountains 23',
-                            postal_code=1337, city='Blurginson'), age=4, birthday=datetime(2006, 6, 01)).save()
-        Customer(name='Bob', last_name='Laxley',
-            address=Address(street='Behind the Mountains 23',
-                            postal_code=1337, city='Blurginson'), age=12, birthday=datetime(1998, 9, 01)).save()
-
-        from django.db.models.aggregates import Count
-        from django_mongodb_engine.contrib.aggregations import Max, Min, Avg
-
-        aggregates = Customer.objects.aggregate(Min("age"), Max("age"), Avg("age"))
-        self.assertEqual(aggregates, {'age__min': 1, 'age__avg': 5.0, 'age__max': 12})
-
-        #with filters and testing the sqlaggregates->mongoaggregate conversion
-        aggregates = Customer.objects.filter(age__gte=4).aggregate(Min("birthday"), Max("birthday"), Avg("age"), Count("id"))
-        self.assertEqual(aggregates, {'birthday__max': datetime(2007, 12, 25, 0, 0),
-                                      'birthday__min': datetime(1998, 9, 1, 0, 0),
-                                      'age__avg': 6.0,
-                                      'id__count': 4})

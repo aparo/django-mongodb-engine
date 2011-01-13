@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models.query import QuerySet
 from django.utils.functional import SimpleLazyObject
 from django.utils.importlib import import_module
 from pymongo.son_manipulator import SONManipulator
@@ -36,7 +37,7 @@ class LazyModelInstance(SimpleLazyObject):
 
 class TransformDjango(SONManipulator):
     def transform_incoming(self, value, collection):
-        if isinstance(value, (list, tuple, set)):
+        if isinstance(value, (list, tuple, set, QuerySet)):
             return [self.transform_incoming(item, collection) for item in value]
 
         if isinstance(value, dict):

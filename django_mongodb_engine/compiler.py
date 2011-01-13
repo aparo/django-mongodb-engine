@@ -1,13 +1,17 @@
 import sys
 import re
+import datetime
 
 from functools import wraps
 
 from django.db.utils import DatabaseError
 from django.db.models.fields import NOT_PROVIDED
+from django.db.models import F
 
 from django.db.models.sql import aggregates as sqlaggregates
 from django.db.models.sql.constants import MULTI, SINGLE
+from django.db.models.sql.where import AND, OR
+from django.utils.tree import Node
 
 import pymongo
 from pymongo.objectid import ObjectId
@@ -15,18 +19,24 @@ from pymongo.objectid import ObjectId
 from djangotoolbox.db.basecompiler import NonrelQuery, NonrelCompiler, \
     NonrelInsertCompiler, NonrelUpdateCompiler, NonrelDeleteCompiler
 
-from .contrib import aggregations
 from .query import A
+from .contrib import RawQuery, RawSpec
+
+def safe_regex(regex, *re_args, **re_kwargs):
+    def wrapper(value):
+        return re.compile(regex % re.escape(value), *re_args, **re_kwargs)
+    wrapper.__name__ = 'safe_regex (%r)' % regex
+    return wrapper
 
 OPERATORS_MAP = {
-    'exact':    lambda val: val,
-    'iexact':    lambda val: re.compile(r'^%s$' % val, re.IGNORECASE),
-    'startswith':    lambda val: re.compile(r'^%s' % val),
-    'istartswith':    lambda val: re.compile(r'^%s' % val, re.IGNORECASE),
-    'endswith':    lambda val: re.compile(r'%s$' % val),
-    'iendswith':    lambda val: re.compile(r'%s$' % val, re.IGNORECASE),
-    'contains':    lambda val: re.compile(r'%s' % val),
-    'icontains':    lambda val: re.compile(r'%s' % val, re.IGNORECASE),
+    'exact':        lambda val: val,
+    'iexact':       safe_regex('^%s$', re.IGNORECASE),
+    'startswith':   safe_regex('^%s'),
+    'istartswith':  safe_regex('^%s', re.IGNORECASE),
+    'endswith':     safe_regex('%s$'),
+    'iendswith':    safe_regex('%s$', re.IGNORECASE),
+    'contains':     safe_regex('%s'),
+    'icontains':    safe_regex('%s', re.IGNORECASE),
     'regex':    lambda val: re.compile(val),
     'iregex':   lambda val: re.compile(val, re.IGNORECASE),
     'gt':       lambda val: {'$gt': val},
@@ -46,28 +56,24 @@ NEGATED_OPERATORS_MAP = {
     'lt':       lambda val: {'$gte': val},
     'lte':      lambda val: {'$gt': val},
     'isnull':   lambda val: {'$ne': None} if val else None,
-    'in':       lambda val: {'$nin': val},
+    'in':       lambda val: val
 }
 
-def safe_generator(func):
-    @wraps(func)
-    def _func(*args, **kwargs):
-        try:
-            ret = func(*args, **kwargs)
-            for item in ret:
-                yield item
-        except pymongo.errors.PyMongoError, e:
-            raise DatabaseError, DatabaseError(str(e)), sys.exc_info()[2]
-    return _func
+
+def first(test_func, iterable):
+    for item in iterable:
+        if test_func(item):
+            return item
 
 def safe_call(func):
     @wraps(func)
-    def _func(*args, **kwargs):
+    def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except pymongo.errors.PyMongoError, e:
             raise DatabaseError, DatabaseError(str(e)), sys.exc_info()[2]
-    return _func
+    return wrapper
+
 
 class DBQuery(NonrelQuery):
     # ----------------------------------------------
@@ -88,7 +94,6 @@ class DBQuery(NonrelQuery):
     def collection(self):
         return self._collection
 
-    @safe_generator
     def fetch(self, low_mark, high_mark):
         results = self._get_results()
         primarykey_column = self.query.get_meta().pk.column
@@ -119,67 +124,98 @@ class DBQuery(NonrelQuery):
             self._ordering.append((order, direction))
         return self
 
-    # This function is used by the default add_filters() implementation
-    @safe_call
-    def add_filter(self, column, lookup_type, negated, db_type, value):
-        # Emulated/converted lookups
+    def add_filters(self, filters, query=None):
+        children = self._get_children(filters.children)
 
-        if isinstance(value, A):
-            field = [ f for f in self.fields if f.name == column][0]
-            column, value = value.as_q(field)
+        if query is None:
+            query = self.db_query
 
-        if column == self.query.get_meta().pk.column:
-            column = '_id'
+            if len(children) == 1 and isinstance(children[0], RawQuery):
+                self.db_query = children[0].query
+                return
 
-        if negated and lookup_type in NEGATED_OPERATORS_MAP:
-            op = NEGATED_OPERATORS_MAP[lookup_type]
-            negated = False
-        else:
-            op = OPERATORS_MAP[lookup_type]
+        if filters.connector is OR:
+            or_conditions = query['$or'] = []
 
-        # TODO: does not work yet (need field)
-        value = op(self.convert_value_for_db(db_type, value))
+        if filters.negated:
+            self._negated = not self._negated
 
-        if negated:
-            value = {'$not': value}
+        for child in children:
+            if filters.connector is OR:
+                subquery = {}
+            else:
+                subquery = query
 
-        self._add_filter(column, lookup_type, db_type, value)
+            if isinstance(child, RawQuery):
+                raise TypeError("Can not combine raw queries with regular filters")
 
-    def _add_filter(self, column, lookup_type, db_type, value):
-        query = self.db_query
-        # Extend existing filters if there are multiple filter() calls
-        # on the same field
-        if column in query:
-            existing = query[column]
-            if isinstance(existing, dict):
-                keys = tuple(existing.keys())
-                if len(keys) != 1:
-                    raise NotImplementedError(
-                        'Unsupported filter combination on column %s: '
-                        '%r and %r' % (column, existing, value))
-                key = keys[0]
-                if isinstance(value, dict):
-                    inequality = ('$gt', '$lt', '$gte', '$lte')
-                    if key in inequality and value.keys()[0] in inequality:
+            if isinstance(child, Node):
+                if filters.connector is OR and child.connector is OR:
+                   if len(child.children) > 1:
+                        raise DatabaseError("Nested ORs are not supported")
+
+                if filters.connector is OR and filters.negated:
+                    raise NotImplementedError("Negated ORs are not implemented")
+
+                self.add_filters(child, query=subquery)
+
+                if filters.connector is OR and subquery:
+                    or_conditions.extend(subquery.pop('$or', []))
+                    or_conditions.append(subquery)
+            else:
+                column, lookup_type, db_type, value = self._decode_child(child)
+                if column == self.query.get_meta().pk.column:
+                    column = '_id'
+
+                existing = subquery.get(column)
+
+                if self._negated and isinstance(existing, dict) and '$ne' in existing:
+                    raise DatabaseError(
+                        "Negated conditions can not be used in conjunction ( ~Q1 & ~Q2 )\n"
+                        "Try replacing your condition with  ~Q(foo__in=[...])"
+                    )
+
+                if isinstance(value, A):
+                    field = first(lambda field: field.attname == column, self.fields)
+                    column, value = value.as_q(field)
+
+                if self._negated:
+                    if lookup_type in NEGATED_OPERATORS_MAP:
+                        op_func = NEGATED_OPERATORS_MAP[lookup_type]
+                    else:
+                        def op_func(value):
+                            return {'$not' : OPERATORS_MAP[lookup_type](value)}
+                else:
+                    op_func = OPERATORS_MAP[lookup_type]
+                value = op_func(self.convert_value_for_db(db_type, value))
+
+                if existing is not None:
+                    key = '$all' if not self._negated else '$nin'
+                    if isinstance(value, dict):
+                        assert isinstance(existing, dict)
                         existing.update(value)
                     else:
-                        raise NotImplementedError(
-                            'Unsupported filter combination on column %s: '
-                            '%r and %r' % (column, existing, value))
+                        if isinstance(existing, dict) and key in existing:
+                            existing[key].append(value)
+                        else:
+                            if isinstance(existing, dict):
+                                existing.update({key: value})
+                            else:
+                                subquery[column] = {key: [existing, value]}
                 else:
-                    if key == '$all':
-                        existing['$all'].append(value)
-                    else:
-                        raise NotImplementedError(
-                            'Unsupported filter combination on column %s: '
-                            '%r and %r' % (column, existing, value))
-            else:
-                query[column] = {'$all': [existing, value]}
-        else:
-            query[column] = value
+                    subquery[column] = value
+
+                query.update(subquery)
+
+        if filters.negated:
+            self._negated = not self._negated
 
     def _get_results(self):
-        results = self._collection.find(self.db_query)
+        if self.query.select_fields:
+            fields = dict((field.attname, 1) for field in self.query.select_fields)
+        else:
+            fields = None
+        results = self._collection.find(self.db_query, fields=fields)
         if self._ordering:
             results.sort(self._ordering)
         if self.query.low_mark > 0:
@@ -193,49 +229,6 @@ class SQLCompiler(NonrelCompiler):
     A simple query: no joins, no distinct, etc.
     """
     query_class = DBQuery
-
-    def get_filters(self, where):
-        if where.connector != "AND":
-            raise Exception("MongoDB only supports joining "
-                "filters with and, not or.")
-        assert where.connector == "AND"
-        filters = {}
-        for child in where.children:
-            if isinstance(child, self.query.where_class):
-                child_filters = self.get_filters(child)
-                for k, v in child_filters.iteritems():
-                    assert k not in filters
-                    if where.negated:
-                        filters.update(self.negate(k, v))
-                    else:
-                        filters[k] = v
-            else:
-                try:
-                    field, val = self.make_atom(*child, negated=where.negated)
-                    filters[field] = val
-                except NotImplementedError:
-                    pass
-        return filters
-
-    def make_atom(self, lhs, lookup_type, value_annotation, params_or_value, negated):
-
-        if hasattr(lhs, "process"):
-            lhs, params = lhs.process(
-                lookup_type, params_or_value, self.connection
-            )
-        else:
-            # apparently this code is never executed
-            assert 0
-            params = Field().get_db_prep_lookup(lookup_type, params_or_value,
-                connection=self.connection, prepared=True)
-        assert isinstance(lhs, (list, tuple))
-        table, column, _ = lhs
-        assert table == self.query.model._meta.db_table
-        if column == self.query.model._meta.pk.column:
-            column = "_id"
-
-        val = self.convert_value_for_db(_, params[0])
-        return column, val
 
     def _split_db_type(self, db_type):
         try:
@@ -258,13 +251,12 @@ class SQLCompiler(NonrelCompiler):
                 return dict((key, self.convert_value_for_db(db_subtype, subvalue))
                             for key, subvalue in value.iteritems())
 
-        else:
-            if isinstance(value, list):
-                # most likely a list of ObjectIds when doing a .delete() query
-                value = [self.convert_value_for_db(db_type, val) for val in value]
-            elif db_type == 'objectid':
-                # single ObjectId
-                return ObjectId(value)
+        if isinstance(value, (set, list, tuple)):
+            # most likely a list of ObjectIds when doing a .delete() query
+            return [self.convert_value_for_db(db_type, val) for val in value]
+
+        if db_type == 'objectid':
+            return ObjectId(value)
 
         # Pass values of any type not covered above as they are.
         # PyMongo will complain if they can't be encoded.
@@ -293,6 +285,12 @@ class SQLCompiler(NonrelCompiler):
         if db_type == 'objectid':
             return unicode(value)
 
+        if db_type == 'date':
+            return datetime.date(value.year, value.month, value.day)
+
+        if db_type == 'time':
+            return datetime.time(value.hour, value.minute, value.second,
+                                 value.microsecond)
         return value
 
     def insert_params(self):
@@ -317,46 +315,43 @@ class SQLCompiler(NonrelCompiler):
         """
         Handles aggregate/count queries
         """
+        aggregations = self.query.aggregate_select.items()
 
-        ret, sqlagg, reduce, finalize, order, initial = [], [], [], [], [], {}
+        if len(aggregations) == 1 and isinstance(aggregations[0][1], sqlaggregates.Count):
+            # Ne need for full-featured aggregation processing if we only
+            # want to count() -- let djangotoolbox's simple Count aggregation
+            # implementation handle this case.
+            return super(SQLCompiler, self).execute_sql(result_type)
+
+        from .contrib import aggregations as aggregations_module
+        sqlagg, reduce, finalize, order, initial = [], [], [], [], {}
         query = self.build_query()
-
-        def add_to_ret(val):
-            if result_type is SINGLE:
-                ret.append(val)
-            elif result_type is MULTI:
-                ret.append([val])
 
         # First aggregations implementation
         # THIS CAN/WILL BE IMPROVED!!!
-        for alias, aggregate in self.query.aggregate_select.items():
+        for alias, aggregate in aggregations:
             if isinstance(aggregate, sqlaggregates.Aggregate):
                 if isinstance(aggregate, sqlaggregates.Count):
-                    # Needed to keep the iteration order which is important in the returned value.
                     order.append(None)
+                    # Needed to keep the iteration order which is important in the returned value.
                     sqlagg.append(self.get_count())
                     continue
-                try:
-                    # Yes, it's not beautiful, it is just a quick and dirty solution.
-                    # Ideas?
-                    cls_name = aggregate.__class__.__name__
-                    agg = getattr(aggregations, cls_name)((aggregate.source and aggregate.source.name) or "_id", **aggregate.extra)
-                    agg.add_to_query(self.query, alias or "_id__%s" % cls_name, aggregate.col, aggregate.source, aggregate.extra.get("is_summary", False))
-                    aggregate = agg
-                except:
-                    # We're not able to execute sql aggregates here
-                    self.query.aggregates.pop(alias)
-                    # Should we raise an exception instead of failing silently?
-                    # raise NotImplementedError("The database backend doesn't support aggregations of type %s" % type(aggregate))
-                    continue
 
+                aggregate_class = getattr(aggregations_module, aggregate.__class__.__name__)
+                # aggregation availability has been checked in check_aggregate_support in base.py
 
-            #just to keep the right order
-            order.append(aggregate.alias)
-            agg = aggregate.as_query(query)
-            initial.update(agg[0])
-            reduce.append(agg[1])
-            finalize.append(agg[2])
+                field = aggregate.source.name if aggregate.source else '_id'
+                if alias is None:
+                    alias = '_id__%s' % cls_name
+                aggregate = aggregate_class(field, **aggregate.extra)
+                aggregate.add_to_query(self.query, alias, aggregate.col, aggregate.source,
+                                       aggregate.extra.get("is_summary", False))
+
+            order.append(aggregate.alias) # just to keep the right order
+            initial_, reduce_, finalize_ = aggregate.as_query(query)
+            initial.update(initial_)
+            reduce.append(reduce_)
+            finalize.append(finalize_)
 
         cursor = query.collection.group(None,
                             query.db_query,
@@ -364,9 +359,12 @@ class SQLCompiler(NonrelCompiler):
                             reduce="function(doc, out){ %s }" % "; ".join(reduce),
                             finalize="function(out){ %s }" % "; ".join(finalize))
 
-        for agg in order:
-            add_to_ret((agg and cursor[0][agg]) or sqlagg.pop(0))
-
+        ret = []
+        for alias in order:
+            result = cursor[0][alias] if alias else sqlagg.pop(0)
+            if result_type is MULTI:
+                result = [result]
+            ret.append(result)
         return ret
 
 class SQLInsertCompiler(NonrelInsertCompiler, SQLCompiler):
@@ -386,17 +384,26 @@ class SQLUpdateCompiler(NonrelUpdateCompiler, SQLCompiler):
 
     @safe_call
     def execute_sql(self, return_id=False):
-        filters = self.get_filters(self.query.where)
+        values = self.query.values
+        if len(values) == 1 and isinstance(values[0][2], RawSpec):
+            spec, kwargs = values[0][2].spec, values[0][2].kwargs
+            kwargs['multi'] = True
+        else:
+            spec, kwargs = self._get_update_spec()
+        return self._collection.update(self.build_query().db_query, spec, **kwargs)
 
-        vals = {}
+    def _get_update_spec(self):
+        multi = True
+        spec = {}
         for field, o, value in self.query.values:
+            if field.unique:
+                multi = False
             if hasattr(value, 'prepare_database_save'):
                 value = value.prepare_database_save(field)
             else:
                 value = field.get_db_prep_save(value, connection=self.connection)
 
             value = self.convert_value_for_db(field.db_type(), value)
-
             if hasattr(value, "evaluate"):
                 assert value.connector in (value.ADD, value.SUB)
                 assert not value.negated
@@ -409,14 +416,11 @@ class SQLUpdateCompiler(NonrelUpdateCompiler, SQLCompiler):
                 else:
                     assert value.connector == value.ADD
                     rhs, lhs = lhs, rhs
-                vals.setdefault("$inc", {})[lhs.name] = rhs
+                spec.setdefault("$inc", {})[lhs.name] = rhs
             else:
-                vals.setdefault("$set", {})[field.column] = value
-        return self._collection.update(
-            filters,
-            vals,
-            multi=True
-        )
+                spec.setdefault("$set", {})[field.column] = value
+
+        return spec, {'multi' : multi}
 
 class SQLDeleteCompiler(NonrelDeleteCompiler, SQLCompiler):
     pass

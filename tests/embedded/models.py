@@ -1,6 +1,6 @@
 from django.db import models
-from djangotoolbox.fields import DictField
-from django_mongodb_engine.fields import EmbeddedModelField
+from djangotoolbox.fields import DictField, EmbeddedModelField
+from django_mongodb_engine.fields import LegacyEmbeddedModelField
 
 class EmbeddedModel(models.Model):
     charfield = models.CharField(max_length=3, blank=False)
@@ -13,6 +13,9 @@ class Model(models.Model):
     em = EmbeddedModelField(EmbeddedModel)
     dict_emb = DictField(EmbeddedModelField(EmbeddedModel))
 
+class LegacyModel(models.Model):
+    legacy = LegacyEmbeddedModelField(EmbeddedModel)
+
 # docstring example copy
 class Address(models.Model):
     street = models.CharField(max_length=200)
@@ -23,5 +26,3 @@ class Customer(models.Model):
     name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     address = EmbeddedModelField(Address)
-    birthday = models.DateTimeField(auto_now_add=True)
-    age = models.IntegerField(null=True)

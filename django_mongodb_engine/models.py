@@ -1,5 +1,13 @@
-from django.db.models import signals
-from .mongodb.fields import add_mongodb_manager, pre_init_mongodb_signal
 
-signals.pre_init.connect(pre_init_mongodb_signal)
-signals.class_prepared.connect(add_mongodb_manager)
+# If you wonder what this file is about please head over to '__init__.py' :-)
+
+from django.db.models import signals
+
+def class_prepared_mongodb_signal(sender, *args, **kwargs):
+    mongo_meta = getattr(sender, 'MongoMeta', None)
+    if mongo_meta is not None:
+        for attr in dir(mongo_meta):
+            if not attr.startswith('_'):
+                setattr(sender._meta, attr, getattr(mongo_meta, attr))
+
+signals.class_prepared.connect(class_prepared_mongodb_signal)
